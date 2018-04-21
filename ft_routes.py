@@ -102,10 +102,10 @@ def check_dupp2(one_sentence):
 
     return False
 
-def word_heatmap(model, sentence):
-    words = sentence.split()
+def word_heatmap(model, evidence):
+    words = evidence['evidence'].split()
 
-    heatmap = []
+    heatmap = {'probability': evidence['probability'], 'top_words': []}
 
     position = 0
     while position < len(words):
@@ -116,9 +116,12 @@ def word_heatmap(model, sentence):
         result = display_sentence_result(model, prepro(probe))
         parts = result.split()
         position += 1
-        heatmap.append({'word': da_word, 'probability': parts[1]})
+        heatmap['top_words'].append({'word': da_word, 'probability': parts[1]})
 
-    return heatmap
+    sorted_obj = dict(heatmap)
+    sorted_obj['top_words'] = sorted(heatmap['top_words'], key=lambda x : x['probability'])
+
+    return sorted_obj
 
 def initialise_sentence_dictionary():
     global sentence_dictionary
@@ -201,8 +204,9 @@ def predict_one_model():
             break
 
     for one_evidence in evidences:
-        print one_evidence['probability']
-        print word_heatmap(model, one_evidence['evidence'])
+        one_evidence['options'] = word_heatmap(model, one_evidence)
+
+    print evidences
 
     model.terminate()
 
@@ -210,15 +214,5 @@ def predict_one_model():
 
 @app.route('/classification/predict', methods=['POST'])
 def predict_route():
-    data = json.loads(request.data)
-    evidencesData = data['properties']
-    doc = pd.read_json('[' + json.dumps(data['doc']) + ']', encoding='utf8').loc[0];
 
-    model = subprocess.Popen(["./fastText/fasttext", "predict-prob", "./model.bin", "-"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
-    fcntl.fcntl(model.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
-
-    evidences = processOneDoc(model, evidencesData[0]['document'], doc['text'])
-
-    model.terminate()
-
-    return json.dumps(evidences)
+    return {}
