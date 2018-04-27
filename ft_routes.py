@@ -166,10 +166,10 @@ def train_route():
 def retrain_route():
     initialise_sentence_dictionary()
     global sentence_dictionary
-    sentence_dictionary.sample(frac=1)
+    randomized = sentence_dictionary.sample(frac=1, replace=True)
 
     f = open("training.txt", "w")
-    for index, row in sentence_dictionary.iterrows():
+    for index, row in randomized.iterrows():
         label = "__label__" + row['property'] + "_" + row['value'] + "_" + str(row['isEvidence'])
         sentence = row['sentence'].encode('utf-8');
         sentence = prepro(sentence)
@@ -183,7 +183,7 @@ def retrain_route():
 
     f.close()
 
-    os.system("./fastText/fasttext supervised -pretrainedVectors ./wiki-news-300d-10k-subword.vec -dim 300 -output model -input training.txt")
+    os.system("./fastText/fasttext supervised -pretrainedVectors ./wiki-news-300d-100k-subword.vec -dim 300 -output model -input training.txt  -wordNgrams 2")
     return "{}"
 
 @app.route('/classification/predictOneModel', methods=['POST'])
