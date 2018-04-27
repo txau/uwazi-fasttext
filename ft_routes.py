@@ -123,6 +123,15 @@ def word_heatmap(model, evidence):
 
     return sorted_obj
 
+def colorize_sentence(top_words, sentence):
+    counter = 0
+    color_sentence = sentence
+    while counter < 5:
+        color_sentence = color_sentence.replace(top_words[counter]['word'][0], "<span style=\"color:red\">" + top_words[counter]['word'][0] + "</span>")
+        counter += 1
+
+    return color_sentence
+
 def initialise_sentence_dictionary():
     global sentence_dictionary
 
@@ -204,9 +213,10 @@ def predict_one_model():
             break
 
     for one_evidence in evidences:
-        one_evidence['options'] = word_heatmap(model, one_evidence)
-
-    print evidences
+        one_evidence['options'] = {}
+        one_evidence['options']['top_words'] = word_heatmap(model, one_evidence)
+        sentence = one_evidence['evidence']
+        one_evidence['evidence'] = colorize_sentence(one_evidence['options']['top_words']['top_words'], sentence)
 
     model.terminate()
 
