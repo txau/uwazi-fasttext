@@ -1,20 +1,27 @@
+# export TFHUB_CACHE_DIR=./tfhub_modules
 # export FLASK_APP=ft_routes.py
 # flask run --port 4000
 
 from flask import Flask, request
+import tensorflow_hub as hub
+import tensorflow as tf
 import pandas as pd
+import numpy as np
 import json
 import subprocess
 import os, fcntl
 import signal
 import random
-import sys
-
-reload(sys)
-sys.setdefaultencoding('utf8')
 
 app = Flask(__name__)
-sentence_dictionary = ''
+vocabSize = 40000
+THRESHOLD = 0.67
+SENTENCE_LENGTH = 30
+
+TRAINING_FILE = 'training.csv'
+RANDOMIZED_TRAINING_FILE = 'random_training.txt'
+
+sentenceEncoder = hub.Module("https://tfhub.dev/google/universal-sentence-encoder/1")
 
 def prepro(sentence):
     result = sentence.replace(",", " , ")
@@ -47,9 +54,18 @@ def display_sentence_result(model, sentence):
         except Exception:
             pass
 
+
+def get_similar_sentences(similarity, evidences, sentences, doc_id):
+    similar_sentences = pd.DataFrame(columns=['probability'])
+    for ind, sentence in enumerate(sentences):
+        for pos,sim in enumerate(similarity[:,ind]):
+            if sim>=THRESHOLD:
+                similar_sentences = similar_sentences.append({'evidence':sentence, 'probability':sim, 'label':1, 'document':doc_id, 'property':evidences.loc[pos]['property'], 'value':evidences.loc[pos]['value']}, ignore_index=True)
+
+
 def processOneDoc(model, id, text):
 
-    sentences = split_into_sentences(text, 50)
+    sentences = split_into_sentences(text, SENTENCE_LENGTH)
     evidences = []
 
     for one_sentence in sentences:
@@ -61,158 +77,106 @@ def processOneDoc(model, id, text):
         info = parts[0].split("_")
         one_result['property'] = info[4]
         one_result['value'] = info[5]
-        one_result['predictedLabel'] = int(info[6] == 'True')
+        one_result['label'] = int(info[6] == 'True')
         one_result['document'] = id
-        if one_result['predictedLabel'] == 1 and not check_dupp2(one_result):
+        if one_result['label'] == 1:
             evidences.append(one_result)
 
     return evidences
 
-def check_dupp(one_sentence):
-    initialise_sentence_dictionary()
-    global sentence_dictionary
+def randomize_training_set():
+    training_data = pd.read_csv(TRAINING_FILE, encoding='utf8')
+    training_data['isEvidence'] = training_data['isEvidence'].apply(str)
+    training_data['label'] = training_data[['property', 'value', 'isEvidence']].apply(lambda x: '_'.join(x), axis=1)
 
-    sentence = one_sentence['evidence'].encode('utf-8').replace('"', '\\"')
+    randomized_training = training_data.sample(frac=1)
+    randomized_training[['label', 'sentence']].to_csv(RANDOMIZED_TRAINING_FILE, sep=' ', index=False, header=False, encoding='utf8')
 
-    query = sentence_dictionary.query(   'document == "' + one_sentence['document']
-                        + '" and property == "' + one_sentence['property'] + '"'
-                        + ' and value == "' + one_sentence['value'] + '"'
-                        + ' and isEvidence == "' + str(one_sentence['isEvidence']) + '"'
-                        + ' and sentence == "' + sentence + '"')
 
-    if not query.empty:
-        return True
-
-    return False
-
-def check_dupp2(one_sentence):
-    initialise_sentence_dictionary()
-    global sentence_dictionary
-
-    sentence = one_sentence['evidence'].encode('utf-8').replace('"', '\\"')
-
-    query = sentence_dictionary.query(   'document == "' + one_sentence['document']
-                        + '" and property == "' + one_sentence['property'] + '"'
-                        + ' and value == "' + one_sentence['value'] + '"'
-                        + ' and isEvidence == "' + str(bool(one_sentence['predictedLabel'])) + '"'
-                        + ' and sentence == "' + sentence + '"')
-
-    if not query.empty:
-        return True
-
-    return False
-
-def word_heatmap(model, evidence):
-    words = evidence['evidence'].split()
-
-    heatmap = {'probability': evidence['probability'], 'top_words': []}
-
-    position = 0
-    while position < len(words):
-        words_left = words[:position]
-        da_word = words[position:position+1]
-        words_right = words[position +1:]
-        probe = ' '.join(words_left) + ' ' + ' '.join(words_right)
-        result = display_sentence_result(model, prepro(probe))
-        parts = result.split()
-        position += 1
-        heatmap['top_words'].append({'word': da_word, 'probability': parts[1]})
-
-    sorted_obj = dict(heatmap)
-    sorted_obj['top_words'] = sorted(heatmap['top_words'], key=lambda x : x['probability'])
-
-    return sorted_obj
-
-def initialise_sentence_dictionary():
-    global sentence_dictionary
-
-    if not isinstance(sentence_dictionary, pd.DataFrame):
+@app.route('/predict-prob', methods=['POST'])
+def predict_prob_route():
+    data = json.loads(request.data)
+    p.stdin.write(data['sentence'] + "\n")
+    while True:
         try:
-            with open("memory.csv") as file:
-                file.close()
-                sentence_dictionary = pd.read_csv("memory.csv")
-        except IOError:
-            sentence_dictionary = pd.DataFrame()
-
-def raw_dictionary_entry():
-    return pd.DataFrame([{'document':'', 'property':'', 'value':'', 'isEvidence':'', 'sentence':''}])
+            return p.stdout.read()
+        except Exception:
+            pass
 
 @app.route('/classification/train', methods=['POST'])
 def train_route():
     data = json.loads(request.data)
-    data['evidence'] =  data['evidence']['text'].encode('utf-8')
+    label = data['property'] + "_" + data['value'] + "_" + str(data['isEvidence']);
+    sentence = data['evidence']['text'].encode('utf-8');
+    sentence = prepro(sentence)
 
-    initialise_sentence_dictionary()
-    global sentence_dictionary
-
-    if not sentence_dictionary.empty and check_dupp(data):
-        print "Dupp sentence, not adding"
-        return "{}"
-
-    entry = raw_dictionary_entry()
-
-    entry.loc[0, 'document'] =  data['document']
-    entry.loc[0, 'property'] =  data['property']
-    entry.loc[0, 'value'] =  data['value']
-    entry.loc[0, 'isEvidence'] = str(data['isEvidence'])
-    entry.loc[0, 'sentence'] =  data['evidence']
-
-    sentence_dictionary = sentence_dictionary.append(entry, ignore_index = True)
-    sentence_dictionary.to_csv("memory.csv")
+    if data['isEvidence']:
+        df = pd.DataFrame({'sentence': sentence, 'property':data['property'], 'value':data['value'], 'isEvidence':data['isEvidence']}, index=[0])
+        if os.path.exists(TRAINING_FILE):
+            df.to_csv(TRAINING_FILE, mode='a', header=False, index=False, encoding='utf8')
+        else:
+            df.to_csv(TRAINING_FILE, mode='a', index=False, encoding='utf8')
 
     return "{}"
+
 
 @app.route('/classification/retrain', methods=['POST'])
 def retrain_route():
-    initialise_sentence_dictionary()
-    global sentence_dictionary
-    sentence_dictionary.sample(frac=1)
-
-    f = open("training.txt", "w")
-    for index, row in sentence_dictionary.iterrows():
-        label = "__label__" + row['property'] + "_" + row['value'] + "_" + str(row['isEvidence'])
-        sentence = row['sentence'].encode('utf-8');
-        sentence = prepro(sentence)
-        try:
-            f.write(label)
-            f.write(" %s\r\n" % sentence)
-        except:
-            print 'WARNING: was not successful'
-            print data
-            print '\n\n'
-
-    f.close()
-
-    os.system("./fastText/fasttext supervised -pretrainedVectors ./wiki-news-300d-10k-subword.vec -dim 300 -output model -input training.txt")
+    randomize_training_set()
+    os.system("./fastText/fasttext supervised -pretrainedVectors ./wiki-news-300d-{0}-subword.vec -dim 300 -output model -input {1}".format(vocabSize, RANDOMIZED_TRAINING_FILE))
     return "{}"
+
 
 @app.route('/classification/predictOneModel', methods=['POST'])
 def predict_one_model():
+    evidences = pd.read_csv(TRAINING_FILE, encoding='utf8')
+
     data = json.loads(request.data)
     docs = pd.read_json(json.dumps(data['docs']), encoding='utf-8')
 
-    initialise_sentence_dictionary()
-    global sentence_dictionary
+    if len(evidences) >= 20:
+        model = subprocess.Popen(["./fastText/fasttext", "predict-prob", "./model.bin", "-"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+        fcntl.fcntl(model.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
+
+        suggestions = []
+        for index, item in enumerate(docs['_id']):
+            suggestions += processOneDoc(model, docs['_id'][index], docs['text'][index])
+
+        model.terminate()
+        return json.dumps(suggestions)
+
+    else:
+        model_evidences = evidences[(evidences['property']==data['property']) & (evidences['value']==data['value'])]
+        model_evidences = model_evidences.reset_index()
+
+        with tf.Session() as session:
+            session.run([tf.global_variables_initializer(), tf.tables_initializer()])
+
+            evidence_embedding = session.run(sentenceEncoder(model_evidences['sentence'].tolist()))
+            suggestions = pd.DataFrame(columns=['probability'])
+            for doc in docs.iterrows():
+                sentences = split_into_sentences(doc[1].text, SENTENCE_LENGTH)
+                sentence_embedding = session.run(sentenceEncoder(sentences))
+
+                similarity = np.matmul(evidence_embedding, np.transpose(sentence_embedding))
+                suggestions = suggestions.append(get_similar_sentences(similarity, evidences, sentences, doc[1]['_id']))
+                suggestions.sort_values(by=['probability'], ascending=False, inplace=True)
+                suggestions.drop_duplicates(inplace=True)
+
+        return suggestions.to_json(orient='records')
+
+
+@app.route('/classification/predict', methods=['POST'])
+def predict_route():
+    data = json.loads(request.data)
+    evidencesData = data['properties']
+    doc = pd.read_json('[' + json.dumps(data['doc']) + ']', encoding='utf8').loc[0];
 
     model = subprocess.Popen(["./fastText/fasttext", "predict-prob", "./model.bin", "-"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
     fcntl.fcntl(model.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
 
-    evidences = []
-    for index, item in enumerate(docs['_id']):
-        evidences += processOneDoc(model, docs['_id'][index], docs['text'][index])
-        if len(evidences) > 100:
-            break
-
-    for one_evidence in evidences:
-        one_evidence['options'] = word_heatmap(model, one_evidence)
-
-    print evidences
+    evidences = processOneDoc(model, evidencesData[0]['document'], doc['text'])
 
     model.terminate()
 
     return json.dumps(evidences)
-
-@app.route('/classification/predict', methods=['POST'])
-def predict_route():
-
-    return {}
