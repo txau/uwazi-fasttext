@@ -61,6 +61,7 @@ def get_similar_sentences(similarity, evidences, sentences, doc_id):
         for pos,sim in enumerate(similarity[:,ind]):
             if sim>=THRESHOLD:
                 similar_sentences = similar_sentences.append({'evidence':sentence, 'probability':sim, 'label':1, 'document':doc_id, 'property':evidences.loc[pos]['property'], 'value':evidences.loc[pos]['value']}, ignore_index=True)
+    return similar_sentences
 
 
 def processOneDoc(model, id, text):
@@ -162,7 +163,6 @@ def predict_one_model():
                 suggestions = suggestions.append(get_similar_sentences(similarity, evidences, sentences, doc[1]['_id']))
                 suggestions.sort_values(by=['probability'], ascending=False, inplace=True)
                 suggestions.drop_duplicates(inplace=True)
-
         return suggestions.to_json(orient='records')
 
 
