@@ -3,6 +3,7 @@
 # flask run --port 4000
 
 from flask import Flask, request
+from sentenceTokenizer import tokenize
 import tensorflow_hub as hub
 import tensorflow as tf
 import pandas as pd
@@ -16,7 +17,8 @@ import random
 app = Flask(__name__)
 vocabSize = 40000
 THRESHOLD = 0.67
-SENTENCE_LENGTH = 30
+MAX_SENTENCE_LENGTH = 40
+MIN_SENTENCE_LENGTH = 5
 
 TRAINING_FILE = 'training.csv'
 RANDOMIZED_TRAINING_FILE = 'random_training.txt'
@@ -28,23 +30,6 @@ def prepro(sentence):
     result = result.replace(":", " : ")
     result = result.replace(";", " ; ")
     return result;
-
-def split_into_sentences(text, size):
-    words = text.split()
-
-    arrs = []
-    while len(words) > size:
-        piece = words[:size]
-        arrs.append(piece)
-        words = words[size:]
-    arrs.append(words)
-
-    sentences = []
-    for one_sentence in arrs:
-        one_sentence = ' '.join(one_sentence)
-        sentences.append(one_sentence)
-
-    return sentences
 
 def display_sentence_result(model, sentence):
     model.stdin.write(sentence.encode('utf-8') + "\n")
@@ -65,8 +50,7 @@ def get_similar_sentences(similarity, evidences, sentences, doc_id):
 
 
 def processOneDoc(model, id, text):
-
-    sentences = split_into_sentences(text, SENTENCE_LENGTH)
+    sentences = tokenize(text, MAX_SENTENCE_LENGTH, MIN_SENTENCE_LENGTH)
     evidences = []
 
     for one_sentence in sentences:
@@ -130,12 +114,13 @@ def retrain_route():
 
 @app.route('/classification/predictOneModel', methods=['POST'])
 def predict_one_model():
-    evidences = pd.read_csv(TRAINING_FILE, encoding='utf8')
-
     data = json.loads(request.data)
     docs = pd.read_json(json.dumps(data['docs']), encoding='utf-8')
 
-    if len(evidences) >= 20:
+    evidences = pd.read_csv(TRAINING_FILE, encoding='utf8')
+    model_evidences = evidences[(evidences['property']==data['property']) & (evidences['value']==data['value'])]
+
+    if len(model_evidences) >= 20:
         model = subprocess.Popen(["./fastText/fasttext", "predict-prob", "./model.bin", "-"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
         fcntl.fcntl(model.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
 
@@ -146,23 +131,27 @@ def predict_one_model():
         model.terminate()
         return json.dumps(suggestions)
 
+    elif len(model_evidences) == 0:
+        return "{}"
+
     else:
-        model_evidences = evidences[(evidences['property']==data['property']) & (evidences['value']==data['value'])]
         model_evidences = model_evidences.reset_index()
 
+        suggestions = pd.DataFrame(columns=['probability'])
         with tf.Session() as session:
             session.run([tf.global_variables_initializer(), tf.tables_initializer()])
 
             evidence_embedding = session.run(sentenceEncoder(model_evidences['sentence'].tolist()))
-            suggestions = pd.DataFrame(columns=['probability'])
             for doc in docs.iterrows():
-                sentences = split_into_sentences(doc[1].text, SENTENCE_LENGTH)
+                sentences = tokenize(doc[1].text, MAX_SENTENCE_LENGTH, RANDOMIZED_TRAINING_FILE)
                 sentence_embedding = session.run(sentenceEncoder(sentences))
 
                 similarity = np.matmul(evidence_embedding, np.transpose(sentence_embedding))
                 suggestions = suggestions.append(get_similar_sentences(similarity, evidences, sentences, doc[1]['_id']))
                 suggestions.sort_values(by=['probability'], ascending=False, inplace=True)
                 suggestions.drop_duplicates(inplace=True)
+
+            session.close()
         return suggestions.to_json(orient='records')
 
 
