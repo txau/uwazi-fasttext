@@ -95,12 +95,11 @@ def train_route():
     sentence = data['evidence']['text'].encode('utf-8');
     sentence = prepro(sentence)
 
-    if data['isEvidence']:
-        df = pd.DataFrame({'sentence': sentence, 'property':data['property'], 'value':data['value'], 'isEvidence':data['isEvidence']}, index=[0])
-        if os.path.exists(TRAINING_FILE):
-            df.to_csv(TRAINING_FILE, mode='a', header=False, index=False, encoding='utf8')
-        else:
-            df.to_csv(TRAINING_FILE, mode='a', index=False, encoding='utf8')
+    df = pd.DataFrame({'sentence': sentence, 'property':data['property'], 'value':data['value'], 'isEvidence':data['isEvidence']}, index=[0])
+    if os.path.exists(TRAINING_FILE):
+        df.to_csv(TRAINING_FILE, mode='a', header=False, index=False, encoding='utf8')
+    else:
+        df.to_csv(TRAINING_FILE, mode='a', index=False, encoding='utf8')
 
     return "{}"
 
@@ -118,7 +117,7 @@ def predict_one_model():
     docs = pd.read_json(json.dumps(data['docs']), encoding='utf-8')
 
     evidences = pd.read_csv(TRAINING_FILE, encoding='utf8')
-    model_evidences = evidences[(evidences['property']==data['property']) & (evidences['value']==data['value'])]
+    model_evidences = evidences[(evidences['property']==data['property']) & (evidences['value']==data['value']) & (evidences['isEvidence']==True)]
 
     if len(model_evidences) >= 20:
         model = subprocess.Popen(["./fastText/fasttext", "predict-prob", "./model.bin", "-"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
