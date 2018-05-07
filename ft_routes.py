@@ -147,7 +147,7 @@ def predict_one_model():
                 sentence_embedding = session.run(sentenceEncoder(sentences))
 
                 similarity = np.matmul(evidence_embedding, np.transpose(sentence_embedding))
-                suggestions = suggestions.append(get_similar_sentences(similarity, evidences, sentences, doc[1]['_id']))
+                suggestions = suggestions.append(get_similar_sentences(similarity, model_evidences, sentences, doc[1]['_id']))
                 suggestions.sort_values(by=['probability'], ascending=False, inplace=True)
                 suggestions.drop_duplicates(inplace=True)
 
